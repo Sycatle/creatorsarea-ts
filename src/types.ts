@@ -165,4 +165,12 @@ export interface ClientConfig {
   userAgent?: string;
   /** Request timeout in milliseconds (default: 10000) */
   timeout?: number;
+  /** Maximum number of retry attempts for failed requests (default: 3) */
+  maxRetries?: number;
+  /** Initial delay between retries in milliseconds (default: 1000) */
+  retryDelay?: number;
+  /** Minimum delay between requests in milliseconds to avoid rate limiting (default: 100) */
+  requestDelay?: number;
+  /** Enable debug logging (default: false) */
+  debug?: boolean;
 }

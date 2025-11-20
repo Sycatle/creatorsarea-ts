@@ -211,15 +211,19 @@ export class JobQueryBuilder {
    * Consider using stream() for better performance.
    * 
    * @param delayMs - Delay between requests in milliseconds (default: 500ms)
+   * @param maxPages - Maximum number of pages to fetch (default: undefined = all pages)
    * @returns Promise with all job results from all pages
    * 
    * @example
    * ```typescript
    * const allJobs = await query.category('DESIGNER').executeAll();
    * console.log(`Found ${allJobs.length} total jobs`);
+   * 
+   * // With max pages limit
+   * const first100Jobs = await query.category('DESIGNER').executeAll(500, 5);
    * ```
    */
-  async executeAll(delayMs: number = 500): Promise<Job[]> {
+  async executeAll(delayMs: number = 500, maxPages?: number): Promise<Job[]> {
     const allJobs: Job[] = [];
     let currentPage = 0;
     let hasMore = true;
@@ -232,6 +236,11 @@ export class JobQueryBuilder {
 
       allJobs.push(...results);
       hasMore = currentPage < pagination.totalPages - 1;
+      
+      // Check maxPages limit
+      if (maxPages !== undefined && currentPage >= maxPages - 1) {
+        hasMore = false;
+      }
       
       if (hasMore && delayMs > 0) {
         // Add delay to avoid rate limiting
@@ -250,6 +259,7 @@ export class JobQueryBuilder {
    * Note: Includes automatic delay to avoid rate limiting
    * 
    * @param delayMs - Delay between page requests in milliseconds (default: 500ms)
+   * @param maxPages - Maximum number of pages to fetch (default: undefined = all pages)
    * @returns AsyncGenerator that yields jobs one by one
    * 
    * @example
@@ -257,9 +267,14 @@ export class JobQueryBuilder {
    * for await (const job of query.category('DESIGNER').stream()) {
    *   console.log(job.title);
    * }
+   * 
+   * // With max pages limit
+   * for await (const job of query.category('DESIGNER').stream(500, 5)) {
+   *   console.log(job.title);
+   * }
    * ```
    */
-  async *stream(delayMs: number = 500): AsyncGenerator<Job> {
+  async *stream(delayMs: number = 500, maxPages?: number): AsyncGenerator<Job> {
     let currentPage = 0;
     let hasMore = true;
 
@@ -274,6 +289,11 @@ export class JobQueryBuilder {
       }
 
       hasMore = currentPage < pagination.totalPages - 1;
+      
+      // Check maxPages limit
+      if (maxPages !== undefined && currentPage >= maxPages - 1) {
+        hasMore = false;
+      }
       
       if (hasMore && delayMs > 0) {
         // Add delay to avoid rate limiting

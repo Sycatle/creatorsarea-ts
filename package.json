@@ -1,0 +1,61 @@
+{
+  "name": "creatorsarea-ts",
+  "version": "0.1.0",
+  "description": "TypeScript/JavaScript SDK for the CreatorsArea.fr job marketplace API",
+  "keywords": [
+    "creatorsarea",
+    "jobs",
+    "freelance",
+    "api",
+    "client",
+    "sdk",
+    "typescript"
+  ],
+  "author": "Sycatle",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sycatle/creatorsarea-ts.git"
+  },
+  "homepage": "https://github.com/Sycatle/creatorsarea-ts#readme",
+  "bugs": {
+    "url": "https://github.com/Sycatle/creatorsarea-ts/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsup": "^8.5.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

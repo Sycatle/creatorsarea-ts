@@ -16,6 +16,11 @@ export class CreatorsAreaClient {
   private readonly baseUrl: string;
   private readonly userAgent: string;
   private readonly timeout: number;
+  private readonly maxRetries: number;
+  private readonly retryDelay: number;
+  private readonly requestDelay: number;
+  private readonly debug: boolean;
+  private lastRequestTime: number = 0;
 
   /**
    * Create a new CreatorsArea client
@@ -26,6 +31,109 @@ export class CreatorsAreaClient {
     this.baseUrl = config.baseUrl ?? 'https://creatorsarea.fr/api';
     this.userAgent = config.userAgent ?? 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
     this.timeout = config.timeout ?? 10000;
+    this.maxRetries = config.maxRetries ?? 3;
+    this.retryDelay = config.retryDelay ?? 1000;
+    this.requestDelay = config.requestDelay ?? 100;
+    this.debug = config.debug ?? false;
+  }
+
+  /**
+   * Log debug message if debug mode is enabled
+   */
+  private log(message: string, ...args: any[]): void {
+    if (this.debug) {
+      console.log(`[CreatorsAreaClient] ${message}`, ...args);
+    }
+  }
+
+  /**
+   * Wait for minimum delay between requests to avoid rate limiting
+   */
+  private async waitForRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest < this.requestDelay) {
+      const delay = this.requestDelay - timeSinceLastRequest;
+      this.log(`Rate limiting: waiting ${delay}ms`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    this.lastRequestTime = Date.now();
+  }
+
+  /**
+   * Fetch with automatic retry on rate limit (429) and server errors (5xx)
+   */
+  private async fetchWithRetry(
+    url: string,
+    options: RequestInit,
+    attempt: number = 0
+  ): Promise<Response> {
+    await this.waitForRateLimit();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      this.log(`Fetching (attempt ${attempt + 1}/${this.maxRetries + 1}): ${url}`);
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      // Handle rate limiting with retry
+      if (response.status === 429) {
+        if (attempt < this.maxRetries) {
+          // Extract Retry-After header if available
+          const retryAfter = response.headers.get('Retry-After');
+          const delay = retryAfter 
+            ? parseInt(retryAfter) * 1000 
+            : this.retryDelay * Math.pow(2, attempt); // Exponential backoff
+          
+          this.log(`Rate limited (429). Retrying after ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.fetchWithRetry(url, options, attempt + 1);
+        }
+        
+        throw new APIError(
+          `Rate limit exceeded (429) after ${this.maxRetries} retries`,
+          429,
+          await response.text()
+        );
+      }
+
+      // Handle server errors with retry
+      if (response.status >= 500 && response.status < 600) {
+        if (attempt < this.maxRetries) {
+          const delay = this.retryDelay * Math.pow(2, attempt); // Exponential backoff
+          this.log(`Server error (${response.status}). Retrying after ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.fetchWithRetry(url, options, attempt + 1);
+        }
+      }
+
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new NetworkError(`Request timeout after ${this.timeout}ms`);
+      }
+      
+      // Retry on network errors
+      if (attempt < this.maxRetries && !(error instanceof APIError)) {
+        const delay = this.retryDelay * Math.pow(2, attempt);
+        this.log(`Network error. Retrying after ${delay}ms...`, error);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.fetchWithRetry(url, options, attempt + 1);
+      }
+      
+      throw error;
+    }
   }
 
   /**
@@ -64,11 +172,8 @@ export class CreatorsAreaClient {
   async getTags(): Promise<Tag[]> {
     try {
       const url = `${this.baseUrl}/tags/offers`;
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-      const response = await fetch(url, {
+      const response = await this.fetchWithRetry(url, {
         method: 'GET',
         headers: {
           'User-Agent': this.userAgent,
@@ -81,10 +186,7 @@ export class CreatorsAreaClient {
         },
         credentials: 'omit',
         mode: 'cors',
-        signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new APIError(
@@ -107,12 +209,8 @@ export class CreatorsAreaClient {
       return tags;
 
     } catch (error) {
-      if (error instanceof APIError || error instanceof ValidationError) {
+      if (error instanceof APIError || error instanceof ValidationError || error instanceof NetworkError) {
         throw error;
-      }
-
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new NetworkError(`Request timeout after ${this.timeout}ms`);
       }
 
       throw new NetworkError(
@@ -152,6 +250,14 @@ export class CreatorsAreaClient {
   async getJobs(options: GetJobsOptions = {}): Promise<{ results: Job[], pagination: Pagination }> {
     const { volunteer, page, tags, kind, status, category } = options;
 
+    // Validate page number
+    if (page !== undefined && page < 0) {
+      throw new ValidationError(
+        `Page number must be >= 0, got: ${page}`,
+        { page }
+      );
+    }
+
     try {
       // Build query parameters
       const params = new URLSearchParams();
@@ -166,7 +272,10 @@ export class CreatorsAreaClient {
       
       if (tags !== undefined) {
         const tagArray = Array.isArray(tags) ? tags : [tags];
-        tagArray.forEach(tag => params.append('tags', tag));
+        // Try comma-separated format first (more compatible)
+        if (tagArray.length > 0) {
+          params.append('tags', tagArray.join(','));
+        }
       }
       
       if (kind !== undefined) {
@@ -184,10 +293,7 @@ export class CreatorsAreaClient {
       const queryString = params.toString();
       const url = `${this.baseUrl}/offers${queryString ? '?' + queryString : ''}`;
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-      const response = await fetch(url, {
+      const response = await this.fetchWithRetry(url, {
         method: 'GET',
         headers: {
           'User-Agent': this.userAgent,
@@ -200,10 +306,7 @@ export class CreatorsAreaClient {
         },
         credentials: 'omit',
         mode: 'cors',
-        signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new APIError(
@@ -228,12 +331,8 @@ export class CreatorsAreaClient {
       return { results, pagination };
 
     } catch (error) {
-      if (error instanceof APIError || error instanceof ValidationError) {
+      if (error instanceof APIError || error instanceof ValidationError || error instanceof NetworkError) {
         throw error;
-      }
-
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new NetworkError(`Request timeout after ${this.timeout}ms`);
       }
 
       throw new NetworkError(
@@ -250,6 +349,7 @@ export class CreatorsAreaClient {
    * @returns Job object or null if not found
    * @throws {APIError} If the API request fails
    * @throws {NetworkError} If there's a network error
+   * @throws {ValidationError} If the job ID format is invalid
    * 
    * @example
    * ```typescript
@@ -260,13 +360,18 @@ export class CreatorsAreaClient {
    * ```
    */
   async getJobById(jobId: string): Promise<Job | null> {
+    // Validate MongoDB ObjectId format (24 hex characters)
+    if (!/^[0-9a-fA-F]{24}$/.test(jobId)) {
+      throw new ValidationError(
+        `Invalid MongoDB ObjectId format: ${jobId}. Expected 24 hexadecimal characters.`,
+        jobId
+      );
+    }
+
     try {
       const url = `${this.baseUrl}/offers/${jobId}`;
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-      const response = await fetch(url, {
+      const response = await this.fetchWithRetry(url, {
         method: 'GET',
         headers: {
           'User-Agent': this.userAgent,
@@ -279,10 +384,7 @@ export class CreatorsAreaClient {
         },
         credentials: 'omit',
         mode: 'cors',
-        signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
 
       if (response.status === 404) {
         return null;
@@ -300,12 +402,8 @@ export class CreatorsAreaClient {
       return data;
 
     } catch (error) {
-      if (error instanceof APIError) {
+      if (error instanceof APIError || error instanceof ValidationError || error instanceof NetworkError) {
         throw error;
-      }
-
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new NetworkError(`Request timeout after ${this.timeout}ms`);
       }
 
       throw new NetworkError(

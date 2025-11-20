@@ -1,7 +1,7 @@
 {
   "name": "creatorsarea-ts",
-  "version": "0.1.0",
-  "description": "TypeScript/JavaScript SDK for the CreatorsArea.fr job marketplace API",
+  "version": "0.2.0",
+  "description": "Unofficial TypeScript/JavaScript SDK for the CreatorsArea.fr job marketplace API with fluent query builder",
   "keywords": [
     "creatorsarea",
     "jobs",
@@ -9,7 +9,10 @@
     "api",
     "client",
     "sdk",
-    "typescript"
+    "typescript",
+    "query-builder",
+    "job-board",
+    "marketplace"
   ],
   "author": "Sycatle",
   "license": "MIT",

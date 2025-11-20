@@ -8,18 +8,34 @@
 
 > ⚠️ **Note**: This is an unofficial SDK. It is not affiliated with, endorsed by, or officially connected to CreatorsArea.fr.
 
+## ⚠️ Important - API Limitations
+
+The CreatorsArea API has **strict rate limiting**. This SDK includes automatic protection:
+
+- ✅ **Automatic retry** on rate limit (429) with exponential backoff
+- ✅ **Configurable delays** between requests (recommended: 1000ms)
+- ✅ **Smart error handling** with detailed error messages
+
+**Known API issues** (cannot be fixed in SDK):
+- ⚠️ `volunteer` filter may not work correctly
+- ⚠️ `kind` filter may not work correctly  
+- ℹ️ Use `category` filter instead (works reliably)
+
 ## Features
 
 ✅ **Full TypeScript support** with complete type definitions  
 ✅ **Fluent Query Builder API** for complex queries  
+✅ **Automatic rate limiting protection** with exponential backoff  
+✅ **Smart retry mechanism** for failed requests (429, 5xx errors)  
+✅ **Input validation** (ObjectId format, page numbers)  
 ✅ **Modern async/await API**  
 ✅ **Tree-shakeable** ESM and CJS builds  
 ✅ **Zero dependencies** (uses native fetch)  
-✅ **Lightweight** (~16KB minified)  
+✅ **Lightweight** (~20KB minified)  
 ✅ **Browser and Node.js** compatible (Node 18+)  
-✅ **Complete API coverage** (jobs, tags, pagination)  
-✅ **Rate limit protection** with automatic delays  
-✅ **Memory-efficient streaming** for large datasets
+✅ **Memory-efficient streaming** for large datasets  
+✅ **Debug mode** for troubleshooting  
+✅ **Configurable delays and timeouts**
 
 ## Installation
 
@@ -40,20 +56,25 @@ bun add creatorsarea-ts
 ## Quick Start
 
 ```typescript
-import { CreatorsAreaClient } from 'creatorsarea-ts';
+import { CreatorsAreaClient, JobStatus } from 'creatorsarea-ts';
 
-const client = new CreatorsAreaClient();
+// Recommended configuration to avoid rate limiting
+const client = new CreatorsAreaClient({
+  requestDelay: 1000,  // 1 second between requests
+  maxRetries: 3,       // Retry up to 3 times on errors
+  retryDelay: 2000,    // 2 seconds initial retry delay
+});
 
 // Method 1: Direct API call
 const { results, pagination } = await client.getJobs({
   category: 'DESIGNER',
+  page: 0,
 });
 
 // Method 2: Query Builder (recommended for complex queries)
 const jobs = await client
   .query()
   .category('DESIGNER')
-  .volunteer(true)
   .status(JobStatus.ACTIVE)
   .execute();
 
@@ -282,12 +303,18 @@ const jobs = await query.executeAndGetResults();
 // Count total matching jobs without fetching all
 const count = await query.count();
 
-// Get all jobs from all pages (with rate limit protection)
-const allJobs = await query.executeAll(delayMs?);
+// Get all jobs from all pages with rate limit protection
+const allJobs = await query.executeAll(delayMs?, maxPages?);
+// Example: Get first 5 pages with 1s delay
+const limitedJobs = await query.executeAll(1000, 5);
 
 // Stream jobs for memory-efficient processing
-for await (const job of query.stream(delayMs?)) {
+for await (const job of query.stream(delayMs?, maxPages?)) {
   console.log(job.title);
+}
+// Example: Stream first 3 pages
+for await (const job of query.stream(1000, 3)) {
+  processJob(job);
 }
 ```
 
@@ -363,6 +390,21 @@ new CreatorsAreaClient(config?: ClientConfig)
 - `baseUrl?: string` - API base URL (default: `https://creatorsarea.fr/api`)
 - `userAgent?: string` - Custom User-Agent header
 - `timeout?: number` - Request timeout in ms (default: `10000`)
+- `maxRetries?: number` - Maximum retry attempts (default: `3`)
+- `retryDelay?: number` - Initial retry delay in ms (default: `1000`)
+- `requestDelay?: number` - Minimum delay between requests in ms (default: `100`)
+- `debug?: boolean` - Enable debug logging (default: `false`)
+
+**Recommended production configuration:**
+```typescript
+const client = new CreatorsAreaClient({
+  requestDelay: 1000,  // Wait 1s between requests to avoid rate limiting
+  maxRetries: 3,       // Retry failed requests up to 3 times
+  retryDelay: 2000,    // Wait 2s before first retry (doubles on each retry)
+  timeout: 15000,      // 15s timeout for requests
+  debug: false,        // Disable debug logs in production
+});
+```
 
 #### Methods
 
@@ -387,19 +429,21 @@ const tags = await client.getTags();
 Fetch jobs from CreatorsArea with pagination.
 
 **Parameters:**
-- `options.volunteer?: boolean` - Filter by volunteer jobs only
-- `options.page?: number` - Page number (0-indexed)
+- `options.volunteer?: boolean` - Filter by volunteer jobs (⚠️ may not work correctly)
+- `options.page?: number` - Page number, 0-indexed (validates >= 0)
 - `options.tags?: string | string[]` - Filter by tag ID(s)
-- `options.kind?: JobKind` - Filter by job kind (TEAM, DEVELOPER, DESIGNER, EDITOR)
-- `options.status?: JobStatus` - Filter by job status (ACTIVE, CLOSED, DRAFT)
-- `options.category?: 'DEVELOPER' | 'DESIGNER' | 'EDITOR' | 'TEAM'` - Filter by category
+- `options.kind?: JobKind` - Filter by job kind (⚠️ may not work correctly)
+- `options.status?: JobStatus` - Filter by job status (ACTIVE, CLOSED, DRAFT) ✅
+- `options.category?: 'DEVELOPER' | 'DESIGNER' | 'EDITOR' | 'TEAM'` - Filter by category ✅
 
 **Returns:** `Promise<{ results: Job[], pagination: Pagination }>`
 
 **Throws:**
-- `APIError` - API request failed
-- `NetworkError` - Network error
-- `ValidationError` - Invalid response
+- `ValidationError` - Invalid page number (< 0)
+- `APIError` - API request failed (including 429 after retries)
+- `NetworkError` - Network error or timeout
+
+**Note:** The SDK automatically retries on 429 and 5xx errors.
 
 **Example:**
 ```typescript
@@ -415,13 +459,29 @@ const { results, pagination } = await client.getJobs({
 Get a single job by ID.
 
 **Parameters:**
-- `jobId: string` - Job ID (MongoDB ObjectId)
+- `jobId: string` - Job ID (must be valid MongoDB ObjectId: 24 hex characters)
 
-**Returns:** `Promise<Job | null>`
+**Returns:** `Promise<Job | null>` - Returns `null` if job not found (404)
+
+**Throws:**
+- `ValidationError` - Invalid ObjectId format
+- `APIError` - API request failed
+- `NetworkError` - Network error
 
 **Example:**
 ```typescript
-const job = await client.getJobById('691f3358bab478f06fd144d3');
+try {
+  const job = await client.getJobById('691f3358bab478f06fd144d3');
+  if (job) {
+    console.log(job.title);
+  } else {
+    console.log('Job not found');
+  }
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.error('Invalid job ID format');
+  }
+}
 ```
 
 ##### `getJobUrl(job): string`
@@ -534,8 +594,35 @@ import {
   CreatorsAreaError,  // Base exception
   APIError,           // API request failed
   NetworkError,       // Network error
-  ValidationError,    // Invalid response
+  ValidationError,    // Invalid input or response
 } from 'creatorsarea-ts';
+```
+
+#### Error Handling
+
+The SDK automatically retries on:
+- **429 (Rate Limit)**: Respects `Retry-After` header, uses exponential backoff
+- **5xx (Server Errors)**: Retries with exponential backoff
+- **Network Errors**: Retries failed connections
+
+```typescript
+import { APIError, NetworkError, ValidationError } from 'creatorsarea-ts';
+
+try {
+  const jobs = await client.getJobs();
+} catch (error) {
+  if (error instanceof APIError) {
+    console.error(`API Error ${error.statusCode}:`, error.message);
+    // 429: Rate limited (already retried maxRetries times)
+    // 4xx: Client error (bad request, not found, etc.)
+  } else if (error instanceof NetworkError) {
+    console.error('Network error:', error.message);
+    // Connection failed, timeout, etc.
+  } else if (error instanceof ValidationError) {
+    console.error('Validation error:', error.message);
+    // Invalid ObjectId, negative page number, etc.
+  }
+}
 ```
 
 ## Browser Support
@@ -547,6 +634,28 @@ Works in all modern browsers with `fetch` API support:
 - Node.js 18+ (native fetch)
 
 For older browsers, use a `fetch` polyfill like `whatwg-fetch`.
+
+## Debug Mode
+
+Enable debug logging to troubleshoot issues:
+
+```typescript
+const client = new CreatorsAreaClient({
+  debug: true,
+  requestDelay: 1000,
+});
+
+// Logs will show:
+// [CreatorsAreaClient] Rate limiting: waiting 500ms
+// [CreatorsAreaClient] Fetching (attempt 1/3): https://creatorsarea.fr/api/offers
+// [CreatorsAreaClient] Rate limited (429). Retrying after 2000ms...
+```
+
+**When to use debug mode:**
+- ✅ During development
+- ✅ When troubleshooting rate limiting issues
+- ✅ To understand retry behavior
+- ❌ Not recommended in production (performance impact)
 
 ## Framework Examples
 
@@ -627,54 +736,104 @@ examples/
 
 ## Best Practices
 
-### Rate Limiting
+### 1. Configure Rate Limiting (Critical)
 
-The API has rate limits. Use the built-in delays in query builder methods:
+**Always configure proper delays** to avoid hitting rate limits:
 
 ```typescript
-// Fetch all pages with 1 second delay
-const allJobs = await client.query()
+// ✅ RECOMMENDED - Safe for production
+const client = new CreatorsAreaClient({
+  requestDelay: 1000,  // 1 second between requests
+  maxRetries: 3,
+  retryDelay: 2000,
+});
+
+// ❌ NOT RECOMMENDED - Will likely hit rate limits
+const client = new CreatorsAreaClient();
+```
+
+### 2. Use Pagination Wisely
+
+```typescript
+// ✅ Good - Process pages with delays
+const allJobs = await client
+  .query()
   .category('DESIGNER')
-  .executeAll(1000);
+  .executeAll(1000, 10);  // Max 10 pages with 1s delay
 
-// Stream with automatic delays
-for await (const job of client.query().volunteer(true).stream(800)) {
-  // Process job
+// ✅ Better - Stream for memory efficiency
+for await (const job of client.query().category('DESIGNER').stream(1000, 5)) {
+  processJob(job);  // Process one at a time
 }
+
+// ❌ Bad - No delay, will hit rate limit
+const allJobs = await client.query().executeAll(0);
 ```
 
-### Memory Efficiency
-
-For large datasets, prefer streaming over loading all at once:
+### 3. Optimize Memory Usage
 
 ```typescript
-// ❌ Not recommended for large datasets
-const allJobs = await client.query().executeAll();
+// ❌ Bad - Loads everything into memory
+const allJobs = await client.query().category('DESIGNER').executeAll();
 
-// ✅ Recommended - memory efficient
-for await (const job of client.query().stream()) {
-  processJob(job);
+// ✅ Good - Streams with limits
+for await (const job of client.query().category('DESIGNER').stream(1000, 10)) {
+  await processJob(job);  // Process one by one
+}
+
+// ✅ Also good - Paginate manually
+let page = 0;
+let hasMore = true;
+while (hasMore && page < 5) {
+  const { results, pagination } = await client.getJobs({ page });
+  await processJobs(results);
+  hasMore = page < pagination.totalPages - 1;
+  page++;
+  await new Promise(r => setTimeout(r, 1000));  // Manual delay
 }
 ```
 
-### Error Handling
-
-Always handle API errors appropriately:
+### 4. Handle Errors Properly
 
 ```typescript
 import { APIError, NetworkError, ValidationError } from 'creatorsarea-ts';
 
 try {
-  const jobs = await client.getJobs();
+  const jobs = await client.getJobs({ page: 0 });
 } catch (error) {
-  if (error instanceof APIError) {
-    console.error(`API Error ${error.statusCode}:`, error.message);
+  if (error instanceof ValidationError) {
+    // Input validation failed (invalid ID, negative page, etc.)
+    console.error('Invalid input:', error.message);
+  } else if (error instanceof APIError) {
+    if (error.statusCode === 429) {
+      // Rate limited even after retries - wait longer
+      console.error('Rate limit exceeded. Wait before retrying.');
+    } else {
+      console.error(`API Error ${error.statusCode}:`, error.message);
+    }
   } else if (error instanceof NetworkError) {
+    // Network issues, timeout, etc.
     console.error('Network error:', error.message);
-  } else if (error instanceof ValidationError) {
-    console.error('Invalid data:', error.message);
   }
 }
+```
+
+### 5. Use Filters That Work
+
+```typescript
+// ✅ WORKS - Use category filter
+const jobs = await client.getJobs({ category: 'DESIGNER' });
+
+// ✅ WORKS - Filter by status
+const activeJobs = await client.getJobs({ status: JobStatus.ACTIVE });
+
+// ⚠️ MAY NOT WORK - volunteer filter is unreliable
+const volunteerJobs = await client.getJobs({ volunteer: true });
+// Workaround: Filter client-side
+const filtered = jobs.filter(j => j.pricing.volunteer);
+
+// ⚠️ MAY NOT WORK - kind filter is unreliable
+// Use category instead
 ```
 
 ## API Reference Summary

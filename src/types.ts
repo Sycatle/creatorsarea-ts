@@ -2,10 +2,10 @@
  * Job kind/type on CreatorsArea
  */
 export enum JobKind {
-  TEAM = 'TEAM',
-  DEVELOPER = 'DEVELOPER',
-  DESIGNER = 'DESIGNER',
-  EDITOR = 'EDITOR',
+  TEAM = 'Équipe',
+  DEVELOPER = 'Développement',
+  DESIGNER = 'Graphisme',
+  EDITOR = 'Montage',
 }
 
 /**
@@ -87,7 +87,7 @@ export interface Job {
   author: Author;
   /** Pricing information */
   pricing: Pricing;
-  /** Job kind (TEAM or COMMISSION) */
+  /** Job kind (Équipe, Développement, Graphisme, Montage) */
   kind: JobKind;
   /** Job status (ACTIVE, CLOSED, DRAFT) */
   status: JobStatus;
@@ -123,19 +123,17 @@ export interface Pagination {
  * API response for job listings
  */
 export interface JobsResponse {
-  /** Job results as object with numeric keys */
-  results: Record<string, Job>;
+  /** Job results as object with numeric keys or as array */
+  results: Record<string, Job> | Job[];
   /** Pagination information */
   pagination: Pagination;
 }
 
 /**
  * API response for tags
+ * Can be either an object with numeric keys or an array
  */
-export interface TagsResponse {
-  /** Tags as object with numeric keys */
-  [key: string]: Tag;
-}
+export type TagsResponse = Record<string, Tag> | Tag[];
 
 /**
  * Options for fetching jobs

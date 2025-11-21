@@ -90,8 +90,9 @@ export class CreatorsAreaClient {
         if (attempt < this.maxRetries) {
           // Extract Retry-After header if available
           const retryAfter = response.headers.get('Retry-After');
-          const delay = retryAfter 
-            ? parseInt(retryAfter) * 1000 
+          const retryAfterSeconds = retryAfter ? parseInt(retryAfter, 10) : NaN;
+          const delay = !isNaN(retryAfterSeconds) && retryAfterSeconds > 0
+            ? retryAfterSeconds * 1000 
             : this.retryDelay * Math.pow(2, attempt); // Exponential backoff
           
           this.log(`Rate limited (429). Retrying after ${delay}ms...`);
@@ -196,15 +197,22 @@ export class CreatorsAreaClient {
         );
       }
 
-      const data = await response.json() as TagsResponse;
+      const data = await response.json() as any;
 
-      // API returns tags as object with numeric keys
+      // API returns tags as object with numeric keys or as array
       if (typeof data !== 'object' || data === null) {
-        throw new ValidationError('Expected object response from API', data);
+        throw new ValidationError('Expected object or array response from API', data);
       }
 
-      // Convert object to array
-      const tags: Tag[] = Object.values(data);
+      // Convert to array (handle both object and array formats)
+      let tags: Tag[];
+      if (Array.isArray(data)) {
+        // API returned tags as array directly
+        tags = data as Tag[];
+      } else {
+        // API returned tags as object with numeric keys
+        tags = Object.values(data) as Tag[];
+      }
 
       return tags;
 
@@ -323,9 +331,20 @@ export class CreatorsAreaClient {
         throw new ValidationError('Expected results and pagination in API response', data);
       }
 
-      // Convert results object to array
-      const resultsObj = data.results as Record<string, Job>;
-      const results: Job[] = Object.values(resultsObj);
+      // Debug: log results structure if debug mode is enabled
+      this.log(`Results type: ${Array.isArray(data.results) ? 'array' : 'object'}, length: ${Array.isArray(data.results) ? data.results.length : Object.keys(data.results).length}`);
+
+      // Convert results to array (handle both object and array formats)
+      let results: Job[];
+      if (Array.isArray(data.results)) {
+        // API returned results as array directly
+        results = data.results as Job[];
+      } else {
+        // API returned results as object with numeric keys
+        const resultsObj = data.results as Record<string, Job>;
+        results = Object.values(resultsObj);
+      }
+      
       const pagination: Pagination = data.pagination;
 
       return { results, pagination };

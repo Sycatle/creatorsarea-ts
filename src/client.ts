@@ -323,9 +323,20 @@ export class CreatorsAreaClient {
         throw new ValidationError('Expected results and pagination in API response', data);
       }
 
-      // Convert results object to array
-      const resultsObj = data.results as Record<string, Job>;
-      const results: Job[] = Object.values(resultsObj);
+      // Debug: log results structure if debug mode is enabled
+      this.log(`Results type: ${Array.isArray(data.results) ? 'array' : 'object'}, length: ${Array.isArray(data.results) ? data.results.length : Object.keys(data.results).length}`);
+
+      // Convert results to array (handle both object and array formats)
+      let results: Job[];
+      if (Array.isArray(data.results)) {
+        // API returned results as array directly
+        results = data.results as Job[];
+      } else {
+        // API returned results as object with numeric keys
+        const resultsObj = data.results as Record<string, Job>;
+        results = Object.values(resultsObj);
+      }
+      
       const pagination: Pagination = data.pagination;
 
       return { results, pagination };

@@ -2,10 +2,10 @@
  * Job kind/type on CreatorsArea
  */
 export enum JobKind {
-  TEAM = 'TEAM',
-  DEVELOPER = 'DEVELOPER',
-  DESIGNER = 'DESIGNER',
-  EDITOR = 'EDITOR',
+  TEAM = 'Équipe',
+  DEVELOPER = 'Développement',
+  DESIGNER = 'Graphisme',
+  EDITOR = 'Montage',
 }
 
 /**
